@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pokemon-app
+  namespace: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pokemon-app
+  template:
+    metadata:
+      labels:
+        app: pokemon-app
+    spec:
+      containers:
+      - name: pokemon-container
+        image: nginx  # Change this to your application image
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: pokemon-storage
+          mountPath: /data  # This is where the volume will be mounted in the container
+      volumes:
+      - name: pokemon-storage
+        persistentVolumeClaim:
+          claimName: pokemon-pvc  # References our PVC
