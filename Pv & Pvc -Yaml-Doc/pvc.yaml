@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pokemon-pvc
+  namespace: dev
+spec:
+  volumeName: pokemon-pv  # Explicitly binding to our PV
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi  # Must match PV storage size
