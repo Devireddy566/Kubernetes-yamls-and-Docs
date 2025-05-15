@@ -1,0 +1,250 @@
+# Kubernetes Persistent Storage Guide
+
+This guide explains how to set up and manage persistent storage in Kubernetes using Google Cloud Platform (GCP) persistent disks.
+
+## Table of Contents
+- [Architecture Overview](#architecture-overview)
+- [Prerequisites](#prerequisites)
+- [Step-by-Step Guide](#step-by-step-guide)
+- [Configuration Files](#configuration-files)
+- [Troubleshooting](#troubleshooting)
+- [Best Practices](#best-practices)
+
+## Architecture Overview
+
+### Component Relationship
+```
+┌─────────────┐     ┌──────────────┐     ┌───────────────┐     ┌─────────────┐
+│   GCP Disk  │────▶│      PV      │────▶│     PVC      │────▶│    Pod      │
+└─────────────┘     └──────────────┘     └───────────────┘     └─────────────┘
+pokemon-disk        pokemon-pv           pokemon-pvc          pokemon-deployment
+```
+
+### Storage Binding Flow
+```
+                  Creates                    Claims                   Uses
+GCP Disk ──────▶ PV ────┐           ┌────▶ PVC ────┐         ┌────▶ Pod
+                        │           │               │         │
+                        │           │               │         │
+                        ▼           ▼               ▼         ▼
+              ┌─────────────────────────────────────────────────┐
+              │              Kubernetes Cluster                  │
+              └─────────────────────────────────────────────────┘
+```
+
+## Prerequisites
+
+1. GCP Account with necessary permissions
+2. Kubernetes cluster running in GCP
+3. `kubectl` configured to access your cluster
+4. Google Cloud SDK installed
+
+## Step-by-Step Guide
+
+### 1. Create GCP Persistent Disk
+
+```bash
+# Create a disk in the same zone as your GKE cluster
+gcloud compute disks create pokemon-disk \
+    --size=10GB \
+    --zone=us-central1-a \
+    --type=pd-standard
+```
+
+### 2. Create Persistent Volume (PV)
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pokemon-pv
+  labels:
+    topology.kubernetes.io/zone: us-central1-a
+    topology.kubernetes.io/region: us-central1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: standard
+  gcePersistentDisk:
+    pdName: pokemon-disk
+    fsType: ext4
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: topology.kubernetes.io/zone
+          operator: In
+          values:
+          - us-central1-a
+```
+
+### 3. Create Persistent Volume Claim (PVC)
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pokemon-pvc
+  namespace: dev
+spec:
+  volumeName: pokemon-pv
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+```
+
+### 4. Create Deployment Using PVC
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pokemon-app
+  namespace: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pokemon-app
+  template:
+    metadata:
+      labels:
+        app: pokemon-app
+    spec:
+      containers:
+      - name: pokemon-container
+        image: nginx
+        volumeMounts:
+        - name: pokemon-storage
+          mountPath: /data
+      volumes:
+      - name: pokemon-storage
+        persistentVolumeClaim:
+          claimName: pokemon-pvc
+```
+
+## Storage States
+
+```
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│Available │────▶│ Pending  │────▶│  Bound   │
+└──────────┘     └──────────┘     └──────────┘
+     │                                 │
+     │                                 │
+     │           ┌──────────┐         │
+     └──────────▶│Released  │◀────────┘
+                 └──────────┘
+```
+
+## Region and Zone Binding
+
+```
+┌────────────────────┐
+│    GCP Region      │
+│   (us-central1)    │
+│  ┌──────────────┐  │
+│  │   Zone 'a'   │  │
+│  │ ┌──────────┐ │  │
+│  │ │GCP Disk  │ │  │
+│  │ └──────────┘ │  │
+│  └──────────────┘  │
+└────────────────────┘
+```
+
+## Common Commands
+
+```bash
+# Check PV status
+kubectl get pv
+kubectl describe pv pokemon-pv
+
+# Check PVC status
+kubectl get pvc -n dev
+kubectl describe pvc -n dev pokemon-pvc
+
+# Check pod status
+kubectl get pods -n dev
+kubectl describe pod -n dev <pod-name>
+```
+
+## Troubleshooting Guide
+
+### 1. PV Not Binding to PVC
+Check:
+- Storage class names match
+- PV and PVC are in correct namespace
+- Capacity matches
+- Access modes match
+
+### 2. Pod Can't Use PVC
+Check:
+- PVC is bound
+- Pod and PVC are in same namespace
+- Node has access to the zone where disk exists
+
+### 3. GCP Disk Shows "None" in Use
+Normal until:
+- PVC is bound to PV
+- Pod using PVC is running
+- Node is in correct zone
+
+## Best Practices
+
+### 1. Resource Management
+- Use consistent naming conventions
+- Label resources properly
+- Document storage requirements
+
+### 2. Storage Planning
+- Size volumes appropriately
+- Consider performance requirements
+- Plan for backup and recovery
+
+### 3. Security
+- Use appropriate access modes
+- Implement RBAC
+- Consider encryption requirements
+
+### 4. Deletion Order
+Always delete in this order:
+1. Pod/Deployment
+2. PVC
+3. PV
+4. GCP Disk (if needed)
+
+## Quick Reference
+
+### Storage Classes
+```
+                         storageClassName: standard
+                         ┌───────────────────────┐
+                         │                       │
+                         ▼                       ▼
+                    ┌────────┐             ┌────────┐
+                    │   PV   │◀──matches──▶│  PVC   │
+                    └────────┘             └────────┘
+```
+
+### Access Modes
+- ReadWriteOnce (RWO)
+- ReadOnlyMany (ROX)
+- ReadWriteMany (RWX) - Not supported by GCE disks
+
+## Need Help?
+
+If you encounter issues:
+1. Check the [Troubleshooting Guide](#troubleshooting-guide)
+2. Review resource status using `kubectl describe`
+3. Check Kubernetes events: `kubectl get events -n dev`
+4. Review pod logs: `kubectl logs -n dev <pod-name>`
+
+## Additional Resources
+- [Kubernetes Storage Documentation](https://kubernetes.io/docs/concepts/storage/)
+- [GCP Persistent Disk Documentation](https://cloud.google.com/compute/docs/disks)
+- [Kubernetes PV and PVC Guide](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
